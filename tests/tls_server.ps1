@@ -6,13 +6,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$rsa = [System.Security.Cryptography.RSA]::Create(2048)
-$req = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new(
-    "CN=localhost",
-    $rsa,
-    [System.Security.Cryptography.HashAlgorithmName]::SHA256,
-    [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
-$cert = $req.CreateSelfSigned([DateTimeOffset]::Now.AddDays(-1), [DateTimeOffset]::Now.AddYears(2))
+$cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq "CN=localhost" -and $_.HasPrivateKey } | Select-Object -First 1
+if (-not $cert) {
+    $cert = New-SelfSignedCertificate -DnsName "localhost" -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(2) -KeyAlgorithm RSA -KeyLength 2048 -KeyExportPolicy Exportable -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.1")
+}
+Write-Host "server cert: $($cert.Subject) hasPrivateKey=$($cert.HasPrivateKey)"
 
 $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
 $listener.Start()
@@ -26,6 +24,7 @@ try {
         }
         $client = $listener.AcceptTcpClient()
         $accepted++
+        $ssl = $null
         try {
             $ssl = [System.Net.Security.SslStream]::new($client.GetStream(), $false)
             $ssl.AuthenticateAsServer($cert, $false, [System.Security.Authentication.SslProtocols]::Tls12 -bor [System.Security.Authentication.SslProtocols]::Tls13, $false)
@@ -58,6 +57,9 @@ try {
                 $ssl.Write($raw, 0, $raw.Length)
                 $ssl.Flush()
             }
+        }
+        catch {
+            Write-Host "connection $accepted error: $($_.Exception.Message)"
         }
         finally {
             if ($ssl) {

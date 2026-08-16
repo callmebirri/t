@@ -22,6 +22,7 @@ static constexpr uint64_t kSweepIntervalMs = 1000;
 static HANDLE g_stopEvent = nullptr;
 static std::vector<HANDLE> g_readerThreads;
 static std::mutex g_threadsMutex;
+static std::mutex g_debugMutex;
 static uint64_t g_timeoutMs = 300000;
 
 struct Transaction {
@@ -123,7 +124,7 @@ static std::wstring ToDisplayText(const std::string& utf8) {
 }
 
 static std::wstring FormatTimestamp(uint64_t ms) {
-    uint64_t ft100 = ms * 10000;
+    uint64_t ft100 = ms * 10000 + 116444736000000000ULL;
     FILETIME ft;
     ft.dwLowDateTime = static_cast<DWORD>(ft100 & 0xFFFFFFFFu);
     ft.dwHighDateTime = static_cast<DWORD>(ft100 >> 32);
@@ -779,6 +780,8 @@ static void ApplySchannelStreamEnd(const ipc::Message& msg) {
 }
 
 static void Dispatch(const ipc::Message& msg) {
+    std::lock_guard<std::mutex> dbgLock(g_debugMutex);
+    WriteConsoleErr(L"[dbg] type=" + std::to_wstring(msg.header.type) + L" id=" + std::to_wstring(msg.header.requestId) + L" pid=" + std::to_wstring(msg.header.pid));
     switch (static_cast<ipc::MsgType>(msg.header.type)) {
         case ipc::MsgType::TransactionStart:
             ApplyTransactionStart(msg);

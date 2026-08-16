@@ -17,6 +17,7 @@
 #include <vector>
 
 static std::mutex g_printMutex;
+static long g_delayMs = 0;
 
 static void PrintLn(const std::string& line) {
     std::lock_guard<std::mutex> lock(g_printMutex);
@@ -59,32 +60,44 @@ static bool ConnectSocket(SspiConnection& c, const std::string& host, int port, 
 static bool DoHandshake(SspiConnection& c, const std::string& host, std::string& err) {
     SCHANNEL_CRED sc = {};
     sc.dwVersion = SCHANNEL_CRED_VERSION;
-    sc.dwFlags = SCH_CRED_MANUAL_CRED_VALIDATION;
-    SECURITY_STATUS    st = AcquireCredentialsHandleW(nullptr, const_cast<LPWSTR>(UNISP_NAME_W), SECPKG_CRED_OUTBOUND, nullptr, &sc, nullptr, nullptr, &c.cred, nullptr);
+    sc.grbitEnabledProtocols = SP_PROT_TLS1_2_CLIENT;
+    sc.dwFlags = SCH_CRED_MANUAL_CRED_VALIDATION;    SECURITY_STATUS st = AcquireCredentialsHandleW(nullptr, const_cast<LPWSTR>(UNISP_NAME_W), SECPKG_CRED_OUTBOUND, nullptr, &sc, nullptr, nullptr, &c.cred, nullptr);
     if (st != SEC_E_OK) {
         err = "AcquireCredentialsHandleW failed: " + std::to_string(st);
         return false;
     }
+    if (g_delayMs > 0) {
+        Sleep(static_cast<DWORD>(g_delayMs));
+    }
     std::wstring target(host.begin(), host.end());
-    ULONG reqFlags = ISC_REQ_CONFIDENTIALITY | ISC_REQ_STREAM | ISC_REQ_EXTENDED_ERROR | ISC_REQ_SEQUENCE_DETECT | ISC_REQ_REPLAY_DETECT;
+    ULONG reqFlags = ISC_REQ_SEQUENCE_DETECT | ISC_REQ_REPLAY_DETECT | ISC_REQ_CONFIDENTIALITY | ISC_REQ_ALLOCATE_MEMORY | ISC_REQ_STREAM;
     DWORD attr = 0;
     bool first = true;
     SecBufferDesc outDesc = {SECBUFFER_VERSION, 1, nullptr};
     SecBuffer outBuf = {SECBUFFER_TOKEN, 0, nullptr};
     outDesc.pBuffers = &outBuf;
+    SecBufferDesc inDesc = {SECBUFFER_VERSION, 1, nullptr};
+    SecBuffer inBuf = {SECBUFFER_TOKEN, 0, nullptr};
+    inDesc.pBuffers = &inBuf;
     for (int round = 0; round < 32; ++round) {
-        SecBufferDesc inDesc = {SECBUFFER_VERSION, 1, nullptr};
-        SecBuffer inBuf = {SECBUFFER_TOKEN, 0, nullptr};
-        inDesc.pBuffers = &inBuf;
-        st = InitializeSecurityContextW(&c.cred, first ? nullptr : &c.ctx, target.data(), reqFlags, 0, SECURITY_NATIVE_DREP,
+        st = InitializeSecurityContextW(&c.cred, first ? nullptr : &c.ctx, target.data(), reqFlags, 0, 0,
                                         first ? nullptr : &inDesc, 0, &c.ctx, &outDesc, &attr, nullptr);
         if (outBuf.cbBuffer > 0 && outBuf.pvBuffer) {
-            if (send(c.sock, static_cast<const char*>(outBuf.pvBuffer), static_cast<int>(outBuf.cbBuffer), 0) == SOCKET_ERROR) {
+            int sent = send(c.sock, static_cast<const char*>(outBuf.pvBuffer), static_cast<int>(outBuf.cbBuffer), 0);
+            FreeContextBuffer(outBuf.pvBuffer);
+            outBuf.pvBuffer = nullptr;
+            outBuf.cbBuffer = 0;
+            if (sent == SOCKET_ERROR) {
                 err = "send handshake token failed";
                 return false;
             }
         }
         if (st == SEC_E_OK) {
+            SecPkgContext_ConnectionInfo ci = {};
+            if (QueryContextAttributesW(&c.ctx, SECPKG_ATTR_CONNECTION_INFO, &ci) == SEC_E_OK) {
+                std::lock_guard<std::mutex> lock(g_printMutex);
+                printf("[sspi] negotiated protocol 0x%lx cipher 0x%lx attrs 0x%lx\n", static_cast<unsigned long>(ci.dwProtocol), static_cast<unsigned long>(ci.aiCipher), static_cast<unsigned long>(attr));
+            }
             return true;
         }
         if (st == SEC_I_CONTINUE_NEEDED) {
@@ -99,7 +112,7 @@ static bool DoHandshake(SspiConnection& c, const std::string& host, std::string&
             first = false;
             continue;
         }
-        err = "InitializeSecurityContextW failed: " + std::to_string(st);
+        err = "InitializeSecurityContextW round " + std::to_string(round) + " failed: " + std::to_string(st);
         return false;
     }
     err = "handshake rounds exceeded";
@@ -107,29 +120,47 @@ static bool DoHandshake(SspiConnection& c, const std::string& host, std::string&
 }
 
 static bool EncryptAndSend(SspiConnection& c, const std::string& data, std::string& err) {
-    const size_t margin = 16 * 1024;
-    std::vector<char> io(data.size() + 2 * margin);
-    std::memcpy(io.data() + margin, data.data(), data.size());
+    SecPkgContext_StreamSizes sizes = {};
+    SECURITY_STATUS qst = QueryContextAttributesW(&c.ctx, SECPKG_ATTR_STREAM_SIZES, &sizes);
+    if (qst != SEC_E_OK) {
+        err = "QueryContextAttributes STREAM_SIZES failed: " + std::to_string(qst);
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(g_printMutex);
+    printf("[sspi] stream sizes header=%lu maxmsg=%lu trailer=%lu\n", static_cast<unsigned long>(sizes.cbHeader), static_cast<unsigned long>(sizes.cbMaximumMessage), static_cast<unsigned long>(sizes.cbTrailer));
+    std::vector<char> header(sizes.cbHeader);
+    std::vector<char> trailer(sizes.cbTrailer);
     SecBuffer bufs[4] = {};
     bufs[0].BufferType = SECBUFFER_STREAM_HEADER;
-    bufs[0].pvBuffer = io.data();
-    bufs[0].cbBuffer = static_cast<ULONG>(margin);
+    bufs[0].pvBuffer = header.data();
+    bufs[0].cbBuffer = static_cast<ULONG>(header.size());
     bufs[1].BufferType = SECBUFFER_DATA;
-    bufs[1].pvBuffer = io.data() + margin;
+    bufs[1].pvBuffer = const_cast<char*>(data.data());
     bufs[1].cbBuffer = static_cast<ULONG>(data.size());
     bufs[2].BufferType = SECBUFFER_STREAM_TRAILER;
-    bufs[2].pvBuffer = io.data() + margin + data.size();
-    bufs[2].cbBuffer = static_cast<ULONG>(margin);
+    bufs[2].pvBuffer = trailer.data();
+    bufs[2].cbBuffer = static_cast<ULONG>(trailer.size());
     bufs[3].BufferType = SECBUFFER_EMPTY;
     SecBufferDesc desc = {SECBUFFER_VERSION, 4, bufs};
     SECURITY_STATUS st = EncryptMessage(&c.ctx, 0, &desc, 0);
+    if (st == SEC_E_BUFFER_TOO_SMALL) {
+        err = "EncryptMessage needs " + std::to_string(bufs[3].cbBuffer) + " bytes total";
+        return false;
+    }
     if (st != SEC_E_OK) {
         err = "EncryptMessage failed: " + std::to_string(st);
         return false;
     }
-    size_t total = static_cast<size_t>(bufs[0].cbBuffer) + bufs[1].cbBuffer + bufs[2].cbBuffer;
-    if (send(c.sock, io.data(), static_cast<int>(total), 0) == SOCKET_ERROR) {
-        err = "send encrypted data failed";
+    WSABUF ws[3];
+    ws[0].buf = header.data();
+    ws[0].len = bufs[0].cbBuffer;
+    ws[1].buf = const_cast<char*>(data.data());
+    ws[1].len = bufs[1].cbBuffer;
+    ws[2].buf = trailer.data();
+    ws[2].len = bufs[2].cbBuffer;
+    DWORD sent = 0;
+    if (WSASend(c.sock, ws, 3, &sent, 0, nullptr, nullptr) == SOCKET_ERROR) {
+        err = "WSASend failed";
         return false;
     }
     return true;
@@ -222,7 +253,7 @@ static void SspiClientTask(const std::string& host, int port, const std::string&
     }
     std::string payload;
     if (raw) {
-        payload = "BIRRI-RAW-" + marker + "-" + std::string(64, 'x');
+        payload = "BIRRI-RAW-" + marker + "-" + std::string(64, 'x') + "\r\n\r\n";
     } else {
         payload = "GET /?marker=" + marker + " HTTP/1.1\r\nHost: " + host + ":" + std::to_string(port) +
                   "\r\nX-Marker: " + marker + "\r\nConnection: close\r\n\r\n";
@@ -305,13 +336,14 @@ static void WinhttpGet(const std::string& host, int port) {
 }
 
 static void PrintUsage() {
-    printf("usage: SspiTarget.exe <host> <port> [--send] [--winhttp] [--count N] [--threads N] [--marker M]\n");
+    printf("usage: SspiTarget.exe <host> <port> [--send] [--winhttp] [--count N] [--threads N] [--marker M] [--delay-ms N]\n");
     printf("  default : direct SSPI/Schannel HTTP request over TLS\n");
     printf("  --send  : send a non-HTTP raw payload over TLS\n");
     printf("  --winhttp: also open one HTTPS request via WinHTTP in the same process\n");
     printf("  --count N : repeat the exchange N times sequentially\n");
     printf("  --threads N : run N concurrent exchanges with distinct markers\n");
     printf("  --marker M : custom marker string\n");
+    printf("  --delay-ms N : sleep N ms after credential acquire (lets DLL hooks install)\n");
 }
 
 int wmain(int argc, wchar_t** argv) {
@@ -346,6 +378,8 @@ int wmain(int argc, wchar_t** argv) {
             std::vector<char> tmp(static_cast<size_t>(len));
             WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, tmp.data(), len, nullptr, nullptr);
             marker = tmp.data();
+        } else if (wcscmp(argv[i], L"--delay-ms") == 0 && i + 1 < argc) {
+            g_delayMs = _wtoi(argv[++i]);
         } else {
             PrintUsage();
             return 1;

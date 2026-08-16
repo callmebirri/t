@@ -125,7 +125,7 @@ static void SendStreamData(uint64_t streamId, ipc::MsgType type, const std::stri
         return;
     }
     ipc::PayloadWriter w;
-    w.Bytes(data.data(), data.size());
+    w.BytesN(data.data(), data.size());
     ipc::IpcClient::Instance().SendPayload(type, streamId, w.Take());
 }
 

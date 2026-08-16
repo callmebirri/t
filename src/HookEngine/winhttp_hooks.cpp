@@ -110,7 +110,7 @@ static void SendBodyChunk(uint64_t id, uint8_t direction, const void* data, size
     w.U8(direction);
     w.U64(total);
     w.U8(0);
-    w.Bytes(data, len);
+    w.BytesN(data, len);
     ipc::IpcClient::Instance().SendPayload(ipc::MsgType::TransactionBody, id, w.Take());
 }
 
@@ -262,17 +262,13 @@ BOOL WINAPI WinHttpSendRequestHook(HINTERNET hRequest, LPCWSTR headers, DWORD he
     if (optional && optionalLength > 0) {
         optionalBody.assign(static_cast<const char*>(optional), optionalLength);
     }
-    BOOL ok = RealWinHttpSendRequest(hRequest, headers, headersLength, optional, optionalLength, totalLength, context);
-    if (!ok) {
-        return FALSE;
-    }
 
     RequestState st;
     {
         std::lock_guard<std::shared_mutex> lock(g_stateMutex);
         auto it = g_requests.find(hRequest);
         if (it == g_requests.end() || it->second.started) {
-            return TRUE;
+            return RealWinHttpSendRequest(hRequest, headers, headersLength, optional, optionalLength, totalLength, context);
         }
         it->second.started = true;
         st = it->second;
@@ -288,31 +284,34 @@ BOOL WINAPI WinHttpSendRequestHook(HINTERNET hRequest, LPCWSTR headers, DWORD he
             haveConnect = true;
         }
     }
-    if (!haveConnect) {
-        return TRUE;
+
+    if (haveConnect) {
+        std::string scheme = (st.flags & WINHTTP_FLAG_SECURE) ? "https" : "http";
+        std::string url = scheme + "://" + ci.host + ":" + std::to_string(ci.port) + st.path;
+
+        std::string headerBlock = "Host: " + ci.host + ":" + std::to_string(ci.port);
+        std::string extra = NormalizeLines(st.extraHeaders);
+        if (!extra.empty()) {
+            headerBlock += "\r\n" + extra;
+        }
+        std::string sendNorm = NormalizeLines(sendHeaders);
+        if (!sendNorm.empty()) {
+            headerBlock += "\r\n" + sendNorm;
+        }
+
+        ipc::PayloadWriter w;
+        w.Str(st.method);
+        w.Str(url);
+        w.Str(st.protocol);
+        w.Str(headerBlock);
+        w.U32(optionalBody.empty() ? 0u : ipc::kTransactionHasRequestBody);
+        ipc::IpcClient::Instance().SendPayload(ipc::MsgType::TransactionStart, st.id, w.Take());
     }
 
-    std::string scheme = (st.flags & WINHTTP_FLAG_SECURE) ? "https" : "http";
-    std::string url = scheme + "://" + ci.host + ":" + std::to_string(ci.port) + st.path;
-
-    std::string headerBlock = "Host: " + ci.host + ":" + std::to_string(ci.port);
-    std::string extra = NormalizeLines(st.extraHeaders);
-    if (!extra.empty()) {
-        headerBlock += "\r\n" + extra;
+    BOOL ok = RealWinHttpSendRequest(hRequest, headers, headersLength, optional, optionalLength, totalLength, context);
+    if (!ok) {
+        return FALSE;
     }
-    std::string sendNorm = NormalizeLines(sendHeaders);
-    if (!sendNorm.empty()) {
-        headerBlock += "\r\n" + sendNorm;
-    }
-
-    ipc::PayloadWriter w;
-    w.Str(st.method);
-    w.Str(url);
-    w.Str(st.protocol);
-    w.Str(headerBlock);
-    w.U32(optionalBody.empty() ? 0u : ipc::kTransactionHasRequestBody);
-    ipc::IpcClient::Instance().SendPayload(ipc::MsgType::TransactionStart, st.id, w.Take());
-
     if (!optionalBody.empty()) {
         TrackRequestBody(hRequest, st.id, optionalBody.data(), optionalBody.size());
     }

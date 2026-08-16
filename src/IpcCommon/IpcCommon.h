@@ -133,6 +133,10 @@ public:
         Push(s.data(), s.size());
     }
     void Bytes(const void* p, size_t n) { Push(p, n); }
+    void BytesN(const void* p, size_t n) {
+        U32(static_cast<uint32_t>(n));
+        Push(p, n);
+    }
     std::vector<uint8_t> Take() { return std::move(buf_); }
 
 private:
