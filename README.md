@@ -2,13 +2,6 @@
 
 A Windows x64 network traffic monitor that captures HTTPS and TLS traffic **in user mode** by injecting a hook DLL into a target process. It observes WinHTTP API calls and Schannel/SSPI TLS streams, streams the captured data to a separate logger process over a named pipe, and renders each request/response pair as readable transactions — without a kernel driver, without a proxy, and without touching certificates.
 
-```
-BirriLauncher.exe  --inject-->  Target process  --named pipe-->  BirriLogger.exe
-                                     |
-                            BirriMonitor.dll (hooks)
-                     WinHTTP APIs  +  Schannel/SSPI (TLS 1.2/1.3)
-```
-
 ---
 
 ## Features
@@ -190,35 +183,6 @@ BirriLauncher.exe build\bin\x64\Release\SspiTarget.exe 127.0.0.1 8443 --winhttp 
 
 ---
 
-## Repository layout
-
-```
-.github/workflows/build.yml   CI: build + third-party cache + artifact upload
-scripts/build.ps1             One-shot build (third-party + solution)
-third_party/                  Vendored MinHook, zlib, brotli (+ VERSIONS.md)
-src/
-  IpcCommon/                  Wire protocol, serialization, constants
-  IpcClient/                  Named-pipe client static lib
-  HookEngine/                 Hook installation + WinHTTP/Schannel detours
-  BirriMonitor/               Injectable DLL + version resource
-  BirriLauncher/              Injection launcher
-  BirriLogger/                Pipe server + traffic renderer
-  SspiTarget/                 Test client
-tests/tls_server.ps1          Local TLS test server
-```
-
-## Third-party dependencies
-
-| Library | Purpose | Pinned |
-|---|---|---|
-| [MinHook](https://github.com/TsudaKageyu/minhook) | API hooking | master @ `d94c64d` (2026-06-13, includes CMake support) |
-| [zlib](https://github.com/madler/zlib) | gzip/deflate decoding | v1.3.1 @ `51b7f2a` |
-| [brotli](https://github.com/google/brotli) | brotli decoding | v1.1.0 @ `ed738e8` |
-
-All are vendored as unmodified plain source copies under `third_party/` — no submodules, no build-time downloads, no prebuilt binaries. See `third_party/VERSIONS.md` for full provenance.
-
----
-
 ## Development notes
 
 - The full technical specification (in Vietnamese) is `birrimonitor_full_spec.md` at the repository root.
@@ -227,4 +191,37 @@ All are vendored as unmodified plain source copies under `third_party/` — no s
 
 ## License
 
-See the project owner for licensing information.
+This project is licensed under the **PolyForm Noncommercial License 1.0.0**.
+
+You are free to use, modify, and distribute this software for **non-commercial purposes** only. Commercial use is strictly prohibited without explicit permission from the author.
+
+See the [LICENSE](LICENSE) file for the full license text.
+
+## Author & Credits
+
+**Author:** birri (callmebirri)
+**GitHub:** [github.com/callmebirri](https://github.com/callmebirri)
+
+**Built with:**
+- [MinHook](https://github.com/TsudaKageyu/minhook) master @ 2026-06-13 - The minimalistic x86/x64 API hooking library for Windows.
+- [zlib](https://zlib.net/) 1.3.1 - Compression library (gzip/deflate decoding).
+- [brotli](https://github.com/google/brotli) 1.1.0 - Generic-purpose lossless compression library (brotli decoding).
+
+All are vendored as unmodified plain source copies under `third_party/` — no submodules, no build-time downloads, no prebuilt binaries. See [VERSIONS.md](third_party/VERSIONS.md) for full provenance.
+
+## Contributing
+
+Contributions, issues, and feature requests are welcome!
+Please read the [CODE_OF_CONDUCT](CODE_OF_CONDUCT.md) first.
+Feel free to check the [issues page](https://github.com/callmebirri/BirriMonitor/issues).
+
+## Disclaimer
+
+**This software is provided "as is", without any warranty.** Use at your own risk. The author is not responsible for any damage or data loss caused by this tool.
+
+---
+<div align="center">
+
+Developed with ❤️ by **birri**
+
+</div>
