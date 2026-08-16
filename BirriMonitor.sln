@@ -12,6 +12,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "BirriLauncher", "src\BirriL
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "BirriLogger", "src\BirriLogger\BirriLogger.vcxproj", "{A1000000-0000-0000-0000-000000000005}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "SspiTarget", "src\SspiTarget\SspiTarget.vcxproj", "{A1000000-0000-0000-0000-000000000006}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -38,6 +40,10 @@ Global
 		{A1000000-0000-0000-0000-000000000005}.Debug|x64.Build.0 = Debug|x64
 		{A1000000-0000-0000-0000-000000000005}.Release|x64.ActiveCfg = Release|x64
 		{A1000000-0000-0000-0000-000000000005}.Release|x64.Build.0 = Release|x64
+		{A1000000-0000-0000-0000-000000000006}.Debug|x64.ActiveCfg = Debug|x64
+		{A1000000-0000-0000-0000-000000000006}.Debug|x64.Build.0 = Debug|x64
+		{A1000000-0000-0000-0000-000000000006}.Release|x64.ActiveCfg = Release|x64
+		{A1000000-0000-0000-0000-000000000006}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

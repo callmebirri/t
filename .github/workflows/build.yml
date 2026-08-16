@@ -1,0 +1,56 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache third-party build
+        uses: actions/cache@v4
+        with:
+          path: build/third_party
+          key: thirdparty-${{ hashFiles('third_party/**') }}
+
+      - name: Build
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1
+
+      - name: Verify outputs
+        shell: powershell
+        run: |
+          $expected = @(
+            'build/bin/x64/Release/BirriMonitor.dll',
+            'build/bin/x64/Release/BirriMonitor.pdb',
+            'build/bin/x64/Release/BirriLauncher.exe',
+            'build/bin/x64/Release/BirriLauncher.pdb',
+            'build/bin/x64/Release/BirriLogger.exe',
+            'build/bin/x64/Release/BirriLogger.pdb'
+          )
+          $missing = @($expected | Where-Object { -not (Test-Path $_) })
+          if ($missing.Count -gt 0) {
+            Write-Error "Missing build outputs: $($missing -join ', ')"
+            exit 1
+          }
+          Write-Host "All build outputs present"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: birrimonitor-${{ github.run_number }}-${{ github.sha }}
+          path: |
+            build/bin/x64/Release/BirriMonitor.dll
+            build/bin/x64/Release/BirriMonitor.pdb
+            build/bin/x64/Release/BirriLauncher.exe
+            build/bin/x64/Release/BirriLauncher.pdb
+            build/bin/x64/Release/BirriLogger.exe
+            build/bin/x64/Release/BirriLogger.pdb
+          if-no-files-found: error
