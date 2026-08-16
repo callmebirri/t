@@ -1,0 +1,7 @@
+build/
+.vs/
+.idea/
+.freebuff/
+*.user
+*.suo
+*.VC.db
